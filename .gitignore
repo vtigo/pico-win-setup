@@ -1,0 +1,8 @@
+# Firmware binaries — keep the repo about the process, not the payloads
+*.uf2
+*.bin
+*.elf
+
+# OS cruft
+Thumbs.db
+.DS_Store

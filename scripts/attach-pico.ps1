@@ -1,0 +1,43 @@
+<#
+.SYNOPSIS
+    Find a Raspberry Pi Pico and attach it to WSL2 via usbipd.
+.DESCRIPTION
+    Locates the USB device with the Raspberry Pi vendor id (2e8a), binds it if
+    it isn't shared yet (requires Administrator the first time), and attaches it
+    to the given WSL distro.
+.PARAMETER Distro
+    WSL distro to attach to. Defaults to 'picow'.
+.EXAMPLE
+    .\attach-pico.ps1
+    .\attach-pico.ps1 -Distro Ubuntu
+#>
+param(
+    [string]$Distro = "picow"
+)
+
+$ErrorActionPreference = "Stop"
+
+# Parse `usbipd list` for a line whose VID:PID starts with 2e8a.
+$line = usbipd list | Select-String '2e8a:' | Select-Object -First 1
+if (-not $line) {
+    Write-Error "No Raspberry Pi Pico (VID 2e8a) found. Check the cable/connection and run 'usbipd list'."
+    exit 1
+}
+
+# BUSID is the first whitespace-delimited token on the line.
+$busid = ($line.ToString().Trim() -split '\s+')[0]
+$state = if ($line.ToString() -match 'Shared')      { 'shared' }
+         elseif ($line.ToString() -match 'Attached') { 'attached' }
+         else                                        { 'not shared' }
+
+Write-Host "Found Pico at busid $busid (state: $state)"
+
+if ($state -eq 'not shared') {
+    Write-Host "Binding $busid (needs Administrator)..."
+    usbipd bind --busid $busid
+}
+
+Write-Host "Attaching $busid to WSL distro '$Distro'..."
+usbipd attach --wsl --busid $busid --distribution $Distro
+
+Write-Host "Done. Inside WSL, check with: lsblk -o NAME,MODEL   or   ls /dev/ttyACM*"
