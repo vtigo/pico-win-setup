@@ -2,10 +2,11 @@
 
 Everything needed to access a **Raspberry Pi Pico / Pico W** from **WSL2** on a
 Windows machine, using [usbipd-win](https://github.com/dorssel/usbipd-win) to
-forward the USB device into Linux. Reproducible on any Windows PC.
+forward the USB device into Linux, and [picotool](https://github.com/raspberrypi/picotool)
+to flash and inspect it. Reproducible on any Windows PC.
 
-The Pico's USB connects to Windows; `usbipd` attaches it to a WSL2 distro; you
-then flash firmware (`.uf2`) or talk to it over serial from inside Linux.
+The Pico's USB connects to Windows → `usbipd` attaches it to a WSL2 distro →
+`picotool` flashes firmware (`.uf2`/`.elf`/`.bin`) or you talk to it over serial.
 
 ---
 
@@ -18,27 +19,33 @@ then flash firmware (`.uf2`) or talk to it over serial from inside Linux.
    The distro name used in the examples below is `picow`. Substitute your own
    (see `wsl -l -v`).
 
-2. **usbipd-win** on Windows:
+2. **usbipd-win** on Windows (examples assume **v5.3.0+**):
    ```powershell
    winget install usbipd
    ```
    Open a new terminal afterwards so `usbipd` is on PATH.
 
-3. **USB/IP tools inside the distro** (needed so WSL can accept the device):
+3. **Tools inside the distro:**
    ```bash
    sudo apt update
-   sudo apt install -y linux-tools-generic hwdata usbutils
+   sudo apt install -y picotool usbutils
    ```
-   > Recent WSL kernels already include USB/IP support; if `usbipd attach` works
-   > you can skip this.
+   > `usbutils` gives you `lsusb` for diagnostics. Recent WSL kernels already
+   > include USB/IP support; if `usbipd attach` works you need nothing else.
+
+4. **udev rule so picotool works without sudo** (optional but recommended):
+   ```bash
+   sudo cp /usr/lib/udev/rules.d/99-picotool.rules /etc/udev/rules.d/ 2>/dev/null
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+   ```
+   Without this, prefix picotool commands with `sudo`.
 
 ---
 
 ## Identify the Pico
 
-Plug the Pico into a USB port. Hold the **BOOTSEL** button while plugging in if
-you want to flash firmware (it then enumerates as a mass-storage "RP2 Boot"
-device with VID:PID `2e8a:0003`).
+Plug the Pico into a USB port. Hold the **BOOTSEL** button while plugging in to
+put it in bootloader mode (VID:PID `2e8a:0003`, "RP2 Boot").
 
 ```powershell
 usbipd list
@@ -53,13 +60,13 @@ BUSID  VID:PID    DEVICE                              STATE
 
 Common Pico VID:PIDs:
 
-| VID:PID     | Meaning                                    |
-|-------------|--------------------------------------------|
-| `2e8a:0003` | BOOTSEL / bootloader — mass storage (flash)|
-| `2e8a:0005` | MicroPython (serial + REPL)                |
-| `2e8a:000a` | Pico SDK USB serial (CDC)                  |
+| VID:PID     | Meaning                                     |
+|-------------|---------------------------------------------|
+| `2e8a:0003` | BOOTSEL / bootloader — ready to flash       |
+| `2e8a:0005` | MicroPython (serial + REPL)                 |
+| `2e8a:000a` | Pico SDK USB serial (CDC)                   |
 
-The `BUSID` (e.g. `1-6`) can change between plug-ins — always re-check.
+> The `BUSID` (e.g. `1-6`) **can change** between plug-ins — always re-check.
 
 ---
 
@@ -70,20 +77,27 @@ The `BUSID` (e.g. `1-6`) can change between plug-ins — always re-check.
 ```powershell
 usbipd bind --busid 1-6
 ```
-Binding is persistent across reboots — do it once per device.
+Binding is persistent across reboots — do it once per device. Afterwards the
+device shows as `Shared` in `usbipd list`.
 
-### Every time you plug in: attach
+### Every time: attach (v5.3.0 syntax)
 
 ```powershell
-usbipd attach --wsl --busid 1-6
+usbipd attach --busid 1-6 --wsl picow
 ```
+> On usbipd **5.3.0+** the distro is the value of `--wsl` (the old
+> `--distribution` flag was removed). The device becomes available in all WSL2
+> distros regardless; naming one just picks which to boot if none is running.
 
-Or use the helper in this repo, which finds the Pico automatically:
+Or use the helper in this repo, which finds the Pico automatically and binds if
+needed:
 
 ```powershell
-.\scripts\attach-pico.ps1            # binds if needed, then attaches to WSL
+.\scripts\attach-pico.ps1               # auto-detect, bind if needed, attach
 .\scripts\attach-pico.ps1 -Distro picow
 ```
+
+After attaching, `usbipd list` should show the Pico as **`Attached`**.
 
 To detach:
 ```powershell
@@ -94,49 +108,42 @@ usbipd detach --busid 1-6
 
 ## Use it from WSL
 
-Check what showed up inside the distro:
+Confirm the device arrived:
 
 ```bash
-lsusb | grep -i 2e8a          # should list the Raspberry Pi device
-lsblk -o NAME,MODEL           # RP2 mass-storage drive (BOOTSEL mode)
-ls /dev/ttyACM*               # serial port (firmware running)
+lsusb | grep -i 2e8a          # Raspberry Pi device present?
+picotool info                 # board + firmware details (sudo if no udev rule)
 ```
 
-### A) Flash firmware (BOOTSEL mode)
+### Flash firmware
 
-The Pico appears as a FAT drive; copying a `.uf2` onto it flashes and reboots
-the board. Use the helper script (auto-detects the RP2 drive):
+picotool loads `.uf2`, `.elf`, or `.bin` directly over the USB PICOBOOT
+interface — no mounting required. `-x` reboots into the program right after:
 
 ```bash
-scripts/flashpico firmware.uf2
+picotool load -x firmware.uf2      # flash and run
+picotool load firmware.elf         # flash a build artifact, stay in BOOTSEL
 ```
 
-Install it onto your PATH so you can call it from anywhere:
+Other handy commands:
 
 ```bash
-mkdir -p ~/bin && cp scripts/flashpico ~/bin/ && chmod +x ~/bin/flashpico
-# add ~/bin to PATH if it isn't already:
-grep -q 'HOME/bin' ~/.bashrc || echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+picotool info -a                   # everything picotool knows about the board
+picotool reboot -f -u              # force a RUNNING Pico back into BOOTSEL
+picotool save firmware.bin         # dump current flash to a file
 ```
 
-Manual equivalent:
-```bash
-sudo mkdir -p /mnt/pico
-sudo mount /dev/sdX1 /mnt/pico     # the RP2 partition from lsblk
-sudo cp firmware.uf2 /mnt/pico/
-sync
-```
-The board reboots itself when the copy finishes; the drive disappearing is
-normal, not an error.
+> `picotool reboot -u` can put a running board into BOOTSEL over USB — so you
+> don't have to physically hold the button + replug every cycle.
 
 Need MicroPython? Download `RPI_PICO_W-*.uf2` from
-<https://micropython.org/download/RPI_PICO_W/> and flash that.
+<https://micropython.org/download/RPI_PICO_W/> and `picotool load -x` it.
 
-### B) Serial / REPL (firmware already running)
+### Serial / REPL (firmware already running)
 
 Only works when firmware is running (not in BOOTSEL mode). After flashing
-MicroPython, the board re-enumerates — re-run `usbipd attach` (busid may change),
-then:
+MicroPython the board re-enumerates and **detaches from WSL** — re-run the
+attach (busid may have changed), then:
 
 ```bash
 sudo screen /dev/ttyACM0 115200          # raw serial
@@ -152,26 +159,33 @@ mpremote connect /dev/ttyACM0 repl
 ```
 # Windows
 usbipd list
-usbipd bind   --busid <ID>     # once, as Administrator
-usbipd attach --wsl --busid <ID>
+usbipd bind   --busid <ID>        # once, as Administrator
+usbipd attach --busid <ID> --wsl picow
 usbipd detach --busid <ID>
 
 # WSL
-flashpico firmware.uf2         # BOOTSEL: flash a .uf2
-mpremote connect /dev/ttyACM0 repl   # running firmware: REPL
+picotool info                     # verify it's visible
+picotool load -x firmware.uf2     # flash and run
+mpremote connect /dev/ttyACM0 repl  # running firmware: REPL
 ```
 
 ---
 
 ## Troubleshooting
 
-- **Pico not in `usbipd list`** — usually a power-only USB cable, or not seated.
-  Try a known-good data cable and a direct port (not a hub).
+- **`No accessible RP-series devices in BOOTSEL mode were found`** — almost
+  always means **the device isn't attached to WSL right now**, even if it's
+  still plugged into the PC. Attachments do **not** survive a detach, replug, or
+  flash/reboot — you must re-attach every time. Check `usbipd list`: if the Pico
+  reads `Shared` (not `Attached`), re-run `usbipd attach --busid <ID> --wsl picow`.
+  Confirm from WSL with `lsusb | grep 2e8a`.
+- **Pico not in `usbipd list` at all** — usually a power-only USB cable, or not
+  seated. Try a known-good data cable and a direct port (not a hub).
 - **`Access denied` on bind** — the terminal isn't elevated. Use an
   Administrator PowerShell.
-- **Attaches but nothing in WSL** — install the USB/IP tools in the distro (see
-  Prerequisites), and confirm you targeted the right distro.
-- **Device name changes (`sde` → `sdf`)** — expected; `flashpico` and the
-  helper detect the device instead of hardcoding it.
-- **`umount: target is busy`** — you have a shell `cd`'d into `/mnt/pico`, or the
-  Pico already rebooted and dropped the mount. Both are harmless.
+- **picotool works with `sudo` but not without** — install the udev rule (see
+  Prerequisites step 4).
+- **`sudo picotool: command not found`** — sudo's `secure_path` excludes where
+  picotool installed. Use `sudo "$(which picotool)" info` or the udev rule.
+- **`Unrecognized command or argument '--distribution'`** — you're on usbipd
+  5.3.0+; use `--wsl <distro>` instead.
