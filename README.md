@@ -16,8 +16,9 @@ The Pico's USB connects to Windows → `usbipd` attaches it to a WSL2 distro →
    ```powershell
    wsl --install
    ```
-   The distro name used in the examples below is `picow`. Substitute your own
-   (see `wsl -l -v`).
+   Examples below use `Ubuntu-24.04` as the distro name. Substitute your own if
+   different (`wsl -l -v` lists them); the `attach-pico.ps1` helper takes a
+   `-d`/`--distro` flag so you don't have to edit any commands.
 
 2. **usbipd-win** on Windows (examples assume **v5.3.0+**):
    ```powershell
@@ -83,7 +84,7 @@ device shows as `Shared` in `usbipd list`.
 ### Every time: attach (v5.3.0 syntax)
 
 ```powershell
-usbipd attach --busid 1-6 --wsl picow
+usbipd attach --busid 1-6 --wsl Ubuntu-24.04
 ```
 > On usbipd **5.3.0+** the distro is the value of `--wsl` (the old
 > `--distribution` flag was removed). The device becomes available in all WSL2
@@ -93,8 +94,8 @@ Or use the helper in this repo, which finds the Pico automatically and binds if
 needed:
 
 ```powershell
-.\scripts\attach-pico.ps1               # auto-detect, bind if needed, attach
-.\scripts\attach-pico.ps1 -Distro picow
+.\scripts\attach-pico.ps1                      # auto-detect, bind if needed, attach (default: Ubuntu)
+.\scripts\attach-pico.ps1 -d Ubuntu-24.04      # or: --distro Ubuntu-24.04
 ```
 
 After attaching, `usbipd list` should show the Pico as **`Attached`**.
@@ -160,7 +161,7 @@ mpremote connect /dev/ttyACM0 repl
 # Windows
 usbipd list
 usbipd bind   --busid <ID>        # once, as Administrator
-usbipd attach --busid <ID> --wsl picow
+usbipd attach --busid <ID> --wsl Ubuntu-24.04
 usbipd detach --busid <ID>
 
 # WSL
@@ -177,7 +178,7 @@ mpremote connect /dev/ttyACM0 repl  # running firmware: REPL
   always means **the device isn't attached to WSL right now**, even if it's
   still plugged into the PC. Attachments do **not** survive a detach, replug, or
   flash/reboot — you must re-attach every time. Check `usbipd list`: if the Pico
-  reads `Shared` (not `Attached`), re-run `usbipd attach --busid <ID> --wsl picow`.
+  reads `Shared` (not `Attached`), re-run `usbipd attach --busid <ID> --wsl Ubuntu-24.04`.
   Confirm from WSL with `lsusb | grep 2e8a`.
 - **Pico not in `usbipd list` at all** — usually a power-only USB cable, or not
   seated. Try a known-good data cable and a direct port (not a hub).

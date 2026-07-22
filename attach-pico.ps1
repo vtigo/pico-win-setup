@@ -4,19 +4,37 @@
 .DESCRIPTION
     Locates the USB device with the Raspberry Pi vendor id (2e8a), binds it if
     it isn't shared yet (requires Administrator the first time), and attaches it
-    to the given WSL distro.
-.PARAMETER Distro
-    WSL distro to attach to. Defaults to 'picow'.
+    to a WSL distro. The distro defaults to "Ubuntu"; override it with -d or
+    --distro.
 .EXAMPLE
     .\attach-pico.ps1
-    .\attach-pico.ps1 -Distro Ubuntu
+    .\attach-pico.ps1 -d Ubuntu-24.04
+    .\attach-pico.ps1 --distro Ubuntu-24.04
 #>
-param(
-    [string]$Distro = "picow"
-)
 
 $ErrorActionPreference = "Stop"
 
+# --- parse args: -d / --distro <name>, -h / --help --------------------------
+$Distro = "Ubuntu"
+for ($i = 0; $i -lt $args.Count; $i++) {
+    switch -Regex ($args[$i]) {
+        '^(-d|--distro|-distro)$' {
+            if ($i + 1 -ge $args.Count) {
+                Write-Error "Missing value for $($args[$i])"; exit 2
+            }
+            $Distro = $args[++$i]
+        }
+        '^(-h|--help)$' {
+            Write-Host "usage: attach-pico.ps1 [-d|--distro <name>]   (default: Ubuntu)"
+            exit 0
+        }
+        default {
+            Write-Error "Unknown argument: $($args[$i])  (try --help)"; exit 2
+        }
+    }
+}
+
+# --- find the Pico ----------------------------------------------------------
 # Parse `usbipd list` for a line whose VID:PID starts with 2e8a.
 $line = usbipd list | Select-String '2e8a:' | Select-Object -First 1
 if (-not $line) {
@@ -26,25 +44,19 @@ if (-not $line) {
 
 # BUSID is the first whitespace-delimited token on the line.
 $busid = ($line.ToString().Trim() -split '\s+')[0]
-# Order matters: 'Not shared' also contains 'shared', so test it before 'Shared'.
-$state = if     ($line.ToString() -match 'Attached')   { 'attached' }
-         elseif ($line.ToString() -match 'Not shared') { 'not shared' }
-         else                                          { 'shared' }
+$state = if ($line.ToString() -match 'Shared')      { 'shared' }
+         elseif ($line.ToString() -match 'Attached') { 'attached' }
+         else                                        { 'not shared' }
 
 Write-Host "Found Pico at busid $busid (state: $state)"
 
-if ($state -eq 'attached') {
-    Write-Host "Already attached — nothing to do."
-    exit 0
-}
-
+# --- bind (once) + attach ---------------------------------------------------
 if ($state -eq 'not shared') {
     Write-Host "Binding $busid (needs Administrator)..."
     usbipd bind --busid $busid
 }
 
-# usbipd 5.3.0+: the distro is the value of --wsl (no --distribution flag).
 Write-Host "Attaching $busid to WSL distro '$Distro'..."
 usbipd attach --busid $busid --wsl $Distro
 
-Write-Host "Done. Inside WSL, verify with: picotool info   (or: lsusb | grep 2e8a)"
+Write-Host "Done. Inside WSL, check with: lsusb | grep 2e8a   or   picotool info"
